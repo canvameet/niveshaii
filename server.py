@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, render_template, session, redirect, url_for
 from flask_cors import CORS
 import sys
 import os
@@ -17,6 +17,11 @@ import io
 import base64
 import zipfile
 import requests
+from functools import wraps
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Import from main.py instead of duplicating logic
 sys.path.insert(0, os.path.dirname(__file__))
@@ -35,12 +40,83 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-app = Flask(__name__)
+app = Flask(__name__, 
+            template_folder='templates',
+            static_folder='static',
+            static_url_path='/static')
 CORS(app)
+
+# Secret key for session management
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 models_cache = {}
 predictions_cache = {}
 cache_lock = threading.Lock()
+
+# Authentication decorator
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ==================== FRONTEND ROUTES ====================
+
+@app.route('/')
+@login_required
+def index():
+    """Main dashboard - requires authentication"""
+    return render_template('index.html')
+
+@app.route('/login')
+def login():
+    """Login page"""
+    # If already logged in, redirect to main page
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    """Logout and clear session"""
+    session.clear()
+    return redirect(url_for('login'))
+
+@app.route('/api/verify-token', methods=['POST'])
+def verify_token():
+    """Verify Firebase token and create session"""
+    try:
+        data = request.get_json()
+        user_id = data.get('uid')
+        email = data.get('email')
+        
+        if user_id and email:
+            # Create session
+            session['user_id'] = user_id
+            session['email'] = email
+            return jsonify({'success': True})
+        
+        return jsonify({'success': False, 'error': 'Invalid token'}), 401
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/firebase-config', methods=['GET'])
+def get_firebase_config():
+    """Serve Firebase configuration from environment variables"""
+    config = {
+        'apiKey': os.environ.get('FIREBASE_API_KEY'),
+        'authDomain': os.environ.get('FIREBASE_AUTH_DOMAIN'),
+        'projectId': os.environ.get('FIREBASE_PROJECT_ID'),
+        'storageBucket': os.environ.get('FIREBASE_STORAGE_BUCKET'),
+        'messagingSenderId': os.environ.get('FIREBASE_MESSAGING_SENDER_ID'),
+        'appId': os.environ.get('FIREBASE_APP_ID'),
+        'measurementId': os.environ.get('FIREBASE_MEASUREMENT_ID')
+    }
+    return jsonify(config)
+
+# ==================== BACKEND API ROUTES ====================
 
 CATEGORIES = {
     'SDG_CLEAN_ENERGY': ['ICLN', 'TAN', 'ENPH', 'FSLR'],
@@ -1252,12 +1328,17 @@ def get_macro_events():
 
 if __name__ == '__main__':
     
-    
-    
     print("="*70)
-    print("NIVESHAI API SERVER")
+    print("NIVESHAI - UNIFIED SERVER (Frontend + Backend)")
     print("="*70)
-    print("API Endpoints:")
+    print("\nFrontend Routes:")
+    print("  GET  /                         - Main dashboard (requires login)")
+    print("  GET  /login                    - Login page")
+    print("  GET  /logout                   - Logout")
+    print("\nAuthentication API:")
+    print("  POST /api/verify-token         - Verify Firebase token")
+    print("  GET  /api/firebase-config      - Get Firebase configuration")
+    print("\nBackend API Endpoints:")
     print("  POST /api/predict              - Predict custom tickers")
     print("  POST /api/popular-stocks       - Get popular stocks with real data")
     print("  GET  /api/macro-events         - Get macro calendar events")
@@ -1265,10 +1346,17 @@ if __name__ == '__main__':
     print("  GET  /api/categories           - List all categories")
     print("  GET  /api/health               - Health check")
     print("  POST /api/clear-cache          - Clear model cache")
+    print("  GET  /api/orderbook/<ticker>   - Get order book data")
     print("="*70)
     print("\nServer starting on http://0.0.0.0:5000")
-    print("Frontend should connect to: http://localhost:5000/api")
+    print("Access the application at: http://localhost:5000")
     print("="*70 + "\n")
+    
+    import webbrowser
+    try:
+        webbrowser.open('http://localhost:5000')
+    except:
+        pass
     
     try:
         app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
