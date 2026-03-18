@@ -1326,6 +1326,439 @@ def get_macro_events():
         return jsonify({'error': str(e)}), 500
 
 
+# ==================== STOCK CHART API ====================
+
+@app.route('/api/stock-chart/<ticker>', methods=['GET'])
+def get_stock_chart(ticker):
+    """Return OHLCV data for interactive chart rendering"""
+    try:
+        import yfinance as yf
+        period = request.args.get('period', '1y')
+        
+        # Map period to yfinance interval
+        interval_map = {
+            '1d': '5m',
+            '5d': '15m',
+            '1mo': '1h',
+            '3mo': '1d',
+            '6mo': '1d',
+            '1y': '1d',
+            '2y': '1d',
+            '5y': '1wk',
+            'max': '1wk'
+        }
+        interval = interval_map.get(period, '1d')
+        
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=period, interval=interval)
+        
+        if hist.empty:
+            return jsonify({'error': f'No data found for ticker {ticker}'}), 404
+        
+        # Get stock info
+        info = {}
+        try:
+            info = stock.info or {}
+        except:
+            pass
+        
+        chart_data = {
+            'ticker': ticker,
+            'period': period,
+            'currency': get_currency_symbol(ticker),
+            'companyName': info.get('longName') or info.get('shortName') or ticker,
+            'currentPrice': round(float(hist['Close'].iloc[-1]), 2),
+            'dates': [d.strftime('%Y-%m-%d %H:%M') if hasattr(d, 'strftime') else str(d) for d in hist.index],
+            'opens': [round(float(v), 4) if not np.isnan(v) else None for v in hist['Open']],
+            'highs': [round(float(v), 4) if not np.isnan(v) else None for v in hist['High']],
+            'lows': [round(float(v), 4) if not np.isnan(v) else None for v in hist['Low']],
+            'closes': [round(float(v), 4) if not np.isnan(v) else None for v in hist['Close']],
+            'volumes': [int(v) if not np.isnan(v) else 0 for v in hist['Volume']],
+        }
+        
+        # Calculate price change
+        if len(hist) >= 2:
+            first_close = float(hist['Close'].iloc[0])
+            last_close = float(hist['Close'].iloc[-1])
+            change_pct = ((last_close - first_close) / first_close) * 100 if first_close > 0 else 0
+            chart_data['priceChange'] = round(last_close - first_close, 2)
+            chart_data['priceChangePct'] = round(change_pct, 2)
+        
+        return jsonify(chart_data)
+        
+    except Exception as e:
+        print(f"Stock chart error for {ticker}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== PORTFOLIO API ====================
+
+def get_portfolio():
+    """Get portfolio from session"""
+    if 'portfolio' not in session:
+        session['portfolio'] = {}
+    return session['portfolio']
+
+def save_portfolio(portfolio):
+    """Save portfolio back to session"""
+    session['portfolio'] = portfolio
+    session.modified = True
+
+def get_trades():
+    """Get trade history from session"""
+    if 'trades' not in session:
+        session['trades'] = []
+    return session['trades']
+
+def save_trades(trades):
+    """Save trades back to session"""
+    session['trades'] = trades
+    session.modified = True
+
+
+@app.route('/api/portfolio', methods=['GET'])
+@login_required
+def get_portfolio_endpoint():
+    """Get current user portfolio with real-time prices"""
+    try:
+        import yfinance as yf
+        portfolio = get_portfolio()
+        
+        holdings = []
+        total_invested = 0
+        total_current = 0
+        
+        for ticker, holding in portfolio.items():
+            qty = holding.get('quantity', 0)
+            avg_buy = holding.get('avgBuyPrice', 0)
+            invested = qty * avg_buy
+            
+            # Get current price
+            current_price = get_current_price(ticker) or avg_buy
+            current_value = qty * current_price
+            pnl = current_value - invested
+            pnl_pct = (pnl / invested * 100) if invested > 0 else 0
+            
+            currency = get_currency_symbol(ticker)
+            
+            holdings.append({
+                'ticker': ticker,
+                'quantity': qty,
+                'avgBuyPrice': round(avg_buy, 2),
+                'currentPrice': round(current_price, 2),
+                'investedValue': round(invested, 2),
+                'currentValue': round(current_value, 2),
+                'pnl': round(pnl, 2),
+                'pnlPct': round(pnl_pct, 2),
+                'currency': currency,
+                'addedAt': holding.get('addedAt', '')
+            })
+            
+            total_invested += invested
+            total_current += current_value
+        
+        total_pnl = total_current - total_invested
+        total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+        
+        return jsonify({
+            'holdings': holdings,
+            'summary': {
+                'totalInvested': round(total_invested, 2),
+                'totalCurrent': round(total_current, 2),
+                'totalPnl': round(total_pnl, 2),
+                'totalPnlPct': round(total_pnl_pct, 2),
+                'holdingsCount': len(holdings)
+            }
+        })
+    except Exception as e:
+        print(f"Portfolio GET error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/portfolio', methods=['POST'])
+@login_required
+def add_to_portfolio():
+    """Add or update a stock in the portfolio"""
+    try:
+        data = request.get_json()
+        ticker = data.get('ticker', '').strip().upper()
+        quantity = float(data.get('quantity', 0))
+        avg_buy_price = float(data.get('avgBuyPrice', 0))
+        
+        if not ticker:
+            return jsonify({'error': 'Ticker is required'}), 400
+        if quantity <= 0:
+            return jsonify({'error': 'Quantity must be positive'}), 400
+        if avg_buy_price <= 0:
+            return jsonify({'error': 'Average buy price must be positive'}), 400
+        
+        portfolio = get_portfolio()
+        
+        if ticker in portfolio:
+            # Update holding (weighted average)
+            existing = portfolio[ticker]
+            old_qty = existing['quantity']
+            old_avg = existing['avgBuyPrice']
+            new_qty = old_qty + quantity
+            new_avg = (old_qty * old_avg + quantity * avg_buy_price) / new_qty
+            portfolio[ticker]['quantity'] = new_qty
+            portfolio[ticker]['avgBuyPrice'] = round(new_avg, 4)
+        else:
+            portfolio[ticker] = {
+                'quantity': quantity,
+                'avgBuyPrice': avg_buy_price,
+                'addedAt': datetime.now().isoformat()
+            }
+        
+        save_portfolio(portfolio)
+        return jsonify({'success': True, 'message': f'{ticker} added/updated in portfolio', 'portfolio': portfolio})
+    except Exception as e:
+        print(f"Portfolio POST error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/portfolio/<ticker>', methods=['DELETE'])
+@login_required
+def remove_from_portfolio(ticker):
+    """Remove a stock from the portfolio"""
+    try:
+        ticker = ticker.upper()
+        portfolio = get_portfolio()
+        
+        if ticker not in portfolio:
+            return jsonify({'error': f'{ticker} not found in portfolio'}), 404
+        
+        del portfolio[ticker]
+        save_portfolio(portfolio)
+        return jsonify({'success': True, 'message': f'{ticker} removed from portfolio'})
+    except Exception as e:
+        print(f"Portfolio DELETE error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/portfolio/analyze', methods=['POST'])
+@login_required
+def analyze_portfolio():
+    """Run AI analysis on all portfolio holdings"""
+    try:
+        portfolio = get_portfolio()
+        
+        if not portfolio:
+            return jsonify({'error': 'Portfolio is empty'}), 400
+        
+        tickers = list(portfolio.keys())
+        
+        # Get current prices and build base analysis
+        holdings_analysis = []
+        total_invested = 0
+        total_current = 0
+        portfolio_weights = {}
+        
+        for ticker in tickers:
+            holding = portfolio[ticker]
+            qty = holding.get('quantity', 0)
+            avg_buy = holding.get('avgBuyPrice', 0)
+            current_price = get_current_price(ticker) or avg_buy
+            
+            invested = qty * avg_buy
+            current_value = qty * current_price
+            total_invested += invested
+            total_current += current_value
+            portfolio_weights[ticker] = current_value
+        
+        # Normalize weights
+        if total_current > 0:
+            for t in portfolio_weights:
+                portfolio_weights[t] = round(portfolio_weights[t] / total_current * 100, 1)
+        
+        # Run AI predictions for all tickers (uses cache if available)
+        ai_results = {}
+        try:
+            pipeline_result = get_or_create_model(tickers)
+            if pipeline_result and pipeline_result.get('results'):
+                for ticker, result in pipeline_result['results'].items():
+                    pred = result.get('prediction', {})
+                    ai_results[ticker] = {
+                        'direction': pred.get('prediction', 'N/A'),
+                        'confidence': round(pred.get('confidence', 0) * 100, 1),
+                        'probabilityUp': round(pred.get('probability_up', 0) * 100, 1),
+                        'probabilityDown': round(pred.get('probability_down', 0) * 100, 1),
+                        'estimatedPrice': pred.get('estimated_price')
+                    }
+        except Exception as pred_err:
+            print(f"Portfolio AI prediction error: {pred_err}")
+        
+        # Build per-holding analysis
+        for ticker in tickers:
+            holding = portfolio[ticker]
+            qty = holding.get('quantity', 0)
+            avg_buy = holding.get('avgBuyPrice', 0)
+            current_price = get_current_price(ticker) or avg_buy
+            currency = get_currency_symbol(ticker)
+            
+            invested = qty * avg_buy
+            current_value = qty * current_price
+            pnl = current_value - invested
+            pnl_pct = (pnl / invested * 100) if invested > 0 else 0
+            
+            ai = ai_results.get(ticker, {})
+            recommendation = 'HOLD'
+            if ai.get('direction') == 'UP' and ai.get('confidence', 0) >= 65:
+                recommendation = 'ADD'
+            elif ai.get('direction') == 'DOWN' and ai.get('confidence', 0) >= 65:
+                recommendation = 'REDUCE'
+            
+            holdings_analysis.append({
+                'ticker': ticker,
+                'quantity': qty,
+                'avgBuyPrice': round(avg_buy, 2),
+                'currentPrice': round(current_price, 2),
+                'investedValue': round(invested, 2),
+                'currentValue': round(current_value, 2),
+                'pnl': round(pnl, 2),
+                'pnlPct': round(pnl_pct, 2),
+                'weight': portfolio_weights.get(ticker, 0),
+                'currency': currency,
+                'aiDirection': ai.get('direction', 'N/A'),
+                'aiConfidence': ai.get('confidence', 0),
+                'aiProbUp': ai.get('probabilityUp', 0),
+                'aiProbDown': ai.get('probabilityDown', 0),
+                'aiEstimatedPrice': round(ai['estimatedPrice'], 2) if ai.get('estimatedPrice') else None,
+                'recommendation': recommendation
+            })
+        
+        total_pnl = total_current - total_invested
+        total_pnl_pct = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+        
+        # Portfolio-level risk: calculate weighted average volatility
+        risk_score = 'Medium'
+        bearish_count = sum(1 for h in holdings_analysis if h['aiDirection'] == 'DOWN')
+        bullish_count = sum(1 for h in holdings_analysis if h['aiDirection'] == 'UP')
+        if bearish_count > len(tickers) / 2:
+            risk_score = 'High'
+        elif bullish_count > len(tickers) / 2:
+            risk_score = 'Low'
+        
+        return jsonify({
+            'holdings': holdings_analysis,
+            'summary': {
+                'totalInvested': round(total_invested, 2),
+                'totalCurrent': round(total_current, 2),
+                'totalPnl': round(total_pnl, 2),
+                'totalPnlPct': round(total_pnl_pct, 2),
+                'holdingsCount': len(tickers),
+                'riskScore': risk_score,
+                'bullishCount': bullish_count,
+                'bearishCount': bearish_count,
+                'weights': portfolio_weights
+            }
+        })
+    except Exception as e:
+        print(f"Portfolio analyze error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== TRADE API ====================
+
+@app.route('/api/trade', methods=['POST'])
+@login_required
+def execute_trade():
+    """Execute a simulated BUY or SELL trade"""
+    try:
+        data = request.get_json()
+        ticker = data.get('ticker', '').strip().upper()
+        trade_type = data.get('type', '').upper()  # BUY or SELL
+        quantity = float(data.get('quantity', 0))
+        
+        if not ticker:
+            return jsonify({'error': 'Ticker is required'}), 400
+        if trade_type not in ('BUY', 'SELL'):
+            return jsonify({'error': 'Trade type must be BUY or SELL'}), 400
+        if quantity <= 0:
+            return jsonify({'error': 'Quantity must be positive'}), 400
+        
+        # Get execution price (current market price)
+        execution_price = get_current_price(ticker)
+        if not execution_price:
+            return jsonify({'error': f'Could not fetch price for {ticker}'}), 400
+        
+        currency = get_currency_symbol(ticker)
+        total_value = round(execution_price * quantity, 2)
+        
+        # Update portfolio
+        portfolio = get_portfolio()
+        
+        if trade_type == 'BUY':
+            if ticker in portfolio:
+                old_qty = portfolio[ticker]['quantity']
+                old_avg = portfolio[ticker]['avgBuyPrice']
+                new_qty = old_qty + quantity
+                new_avg = (old_qty * old_avg + quantity * execution_price) / new_qty
+                portfolio[ticker]['quantity'] = new_qty
+                portfolio[ticker]['avgBuyPrice'] = round(new_avg, 4)
+            else:
+                portfolio[ticker] = {
+                    'quantity': quantity,
+                    'avgBuyPrice': execution_price,
+                    'addedAt': datetime.now().isoformat()
+                }
+        elif trade_type == 'SELL':
+            if ticker not in portfolio or portfolio[ticker]['quantity'] < quantity:
+                available = portfolio.get(ticker, {}).get('quantity', 0)
+                return jsonify({'error': f'Insufficient holdings. You have {available} shares of {ticker}'}), 400
+            portfolio[ticker]['quantity'] -= quantity
+            if portfolio[ticker]['quantity'] <= 0:
+                del portfolio[ticker]
+        
+        save_portfolio(portfolio)
+        
+        # Record trade
+        trades = get_trades()
+        trade_record = {
+            'id': len(trades) + 1,
+            'ticker': ticker,
+            'type': trade_type,
+            'quantity': quantity,
+            'price': round(execution_price, 2),
+            'totalValue': total_value,
+            'currency': currency,
+            'timestamp': datetime.now().isoformat(),
+            'status': 'EXECUTED'
+        }
+        trades.append(trade_record)
+        save_trades(trades)
+        
+        return jsonify({
+            'success': True,
+            'trade': trade_record,
+            'message': f'{trade_type} {quantity} shares of {ticker} @ {currency}{execution_price:.2f} | Total: {currency}{total_value}'
+        })
+        
+    except Exception as e:
+        print(f"Trade execution error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trades', methods=['GET'])
+@login_required
+def get_trades_endpoint():
+    """Get all trades for current session"""
+    try:
+        trades = get_trades()
+        # Return in reverse chronological order
+        return jsonify({'trades': list(reversed(trades)), 'count': len(trades)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     
     print("="*70)

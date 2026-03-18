@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CivicCare - Login</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 450px;
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .login-header {
+            background: linear-gradient(135deg, #000000 0%, #2d2d2d 100%);
+            padding: 30px 20px;
+            text-align: center;
+            color: white;
+        }
+
+        .login-header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+            font-weight: 700;
+        }
+
+        .login-header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .role-toggle {
+            display: flex;
+            gap: 0;
+            background: #f0f0f0;
+            padding: 8px;
+            border-radius: 12px;
+            margin: 25px 30px;
+        }
+
+        .toggle-btn {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            color: #666;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-btn.active {
+            background: white;
+            color: #000000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .login-form {
+            padding: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group input::placeholder {
+            color: #999;
+        }
+
+        .error-message {
+            color: #e74c3c;
+            font-size: 13px;
+            margin-top: 5px;
+            display: none;
+        }
+
+        .form-group.error input {
+            border-color: #e74c3c;
+        }
+
+        .form-group.error .error-message {
+            display: block;
+        }
+
+        .remember-me {
+            display: flex;
+            align-items: center;
+            margin-bottom: 25px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .remember-me input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-right: 8px;
+            cursor: pointer;
+            accent-color: #000000;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #000000 0%, #2d2d2d 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .login-btn:active {
+            transform: translateY(0);
+        }
+
+        .login-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        .signup-section {
+            text-align: center;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .signup-section.hidden {
+            display: none;
+        }
+
+        .signup-link {
+            color: #000000;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+
+        .signup-link:hover {
+            color: #333333;
+            text-decoration: underline;
+        }
+
+        .signup-text {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .forgot-password {
+            text-align: center;
+            margin-top: 15px;
+        }
+
+        .forgot-password a {
+            color: #000000;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .forgot-password a:hover {
+            color: #333333;
+            text-decoration: underline;
+        }
+
+        .success-message {
+            display: none;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+            animation: slideIn 0.3s ease-out;
+            border-left: 4px solid #2e7d32;
+        }
+
+        .success-message.show {
+            display: block;
+        }
+
+        .error-alert {
+            display: none;
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+            animation: slideIn 0.3s ease-out;
+            border-left: 4px solid #c62828;
+        }
+
+        .error-alert.show {
+            display: block;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            color: #000000;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid #e0e0e0;
+            border-top: 3px solid #000000;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        @media (max-width: 480px) {
+            .login-container {
+                border-radius: 15px;
+            }
+
+            .login-header h1 {
+                font-size: 24px;
+            }
+
+            .login-form {
+                padding: 25px;
+            }
+
+            .role-toggle {
+                margin: 20px 25px;
+            }
+
+            .toggle-btn {
+                padding: 10px 15px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>🏛️ CivicCare</h1>
+            <p>Civic Services Management System</p>
+        </div>
+
+        <div class="role-toggle">
+            <button class="toggle-btn active" data-role="user">User Login</button>
+            <button class="toggle-btn" data-role="admin">Admin Login</button>
+        </div>
+
+        <div class="login-form">
+            <div class="success-message" id="successMessage"></div>
+            <div class="error-alert" id="errorAlert"></div>
+
+            <form id="loginForm">
+                <!-- User Login Fields -->
+                <div id="userFields">
+                    <div class="form-group">
+                        <label for="userEmail">Email Address</label>
+                        <input type="email" id="userEmail" placeholder="your@email.com" required>
+                        <span class="error-message">Please enter a valid email</span>
+                    </div>
+                </div>
+
+                <!-- Admin Login Fields -->
+                <div id="adminFields" style="display: none;">
+                    <div class="form-group">
+                        <label for="adminId">Admin ID / Email</label>
+                        <input type="text" id="adminId" placeholder="Admin ID or Email" required>
+                        <span class="error-message">Please enter your Admin ID or Email</span>
+                    </div>
+                </div>
+
+                <!-- Common Password Field -->
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" placeholder="••••••••" required>
+                    <span class="error-message">Please enter your password</span>
+                </div>
+
+                <div class="remember-me">
+                    <input type="checkbox" id="rememberMe">
+                    <label for="rememberMe" style="margin: 0; font-weight: 400;">Remember me</label>
+                </div>
+
+                <!-- Signup Section (User Only) -->
+                <div class="signup-section" id="signupSection">
+                    <p class="signup-text">Don't have an account?</p>
+                    <a href="#" class="signup-link" onclick="handleSignup(event)">Create one now</a>
+                </div>
+
+                <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+
+                <div class="loading" id="loading">
+                    <span class="spinner"></span>
+                    Logging in...
+                </div>
+
+                <div class="forgot-password">
+                    <a href="#" onclick="handleForgotPassword(event)">Forgot your password?</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyB0ElL35rjIcQGiU5tgvGPj-7NRPwSLFCo",
+            authDomain: "loginapp-e7f18.firebaseapp.com",
+            projectId: "loginapp-e7f18",
+            storageBucket: "loginapp-e7f18.firebasestorage.app",
+            messagingSenderId: "419910970303",
+            appId: "1:419910970303:web:xxxxx"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        // State management
+        let currentRole = 'user';
+
+        // DOM Elements
+        const toggleButtons = document.querySelectorAll('.toggle-btn');
+        const userFields = document.getElementById('userFields');
+        const adminFields = document.getElementById('adminFields');
+        const signupSection = document.getElementById('signupSection');
+        const loginForm = document.getElementById('loginForm');
+        const userEmailInput = document.getElementById('userEmail');
+        const adminIdInput = document.getElementById('adminId');
+        const passwordInput = document.getElementById('password');
+        const loginBtn = document.getElementById('loginBtn');
+        const loading = document.getElementById('loading');
+        const successMessage = document.getElementById('successMessage');
+        const errorAlert = document.getElementById('errorAlert');
+
+        // Role Toggle Handler
+        toggleButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                currentRole = this.getAttribute('data-role');
+                
+                // Update active button
+                toggleButtons.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+
+                // Toggle form fields
+                if (currentRole === 'user') {
+                    userFields.style.display = 'block';
+                    adminFields.style.display = 'none';
+                    signupSection.classList.remove('hidden');
+                    loginBtn.textContent = 'Sign In';
+                    userEmailInput.focus();
+                    clearForm();
+                } else {
+                    userFields.style.display = 'none';
+                    adminFields.style.display = 'block';
+                    signupSection.classList.add('hidden');
+                    loginBtn.textContent = 'Admin Sign In';
+                    adminIdInput.focus();
+                    clearForm();
+                }
+
+                // Clear validation errors
+                clearErrors();
+                hideMessages();
+            });
+        });
+
+        // Form Submission Handler
+        loginForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Clear previous messages
+            hideMessages();
+            clearErrors();
+
+            // Validate form
+            if (!validateForm()) {
+                return;
+            }
+
+            // Perform Firebase login
+            firebaseLogin();
+        });
+
+        // Validation Function
+        function validateForm() {
+            let isValid = true;
+
+            if (currentRole === 'user') {
+                if (!userEmailInput.value.trim()) {
+                    showError(userEmailInput, 'Email is required');
+                    isValid = false;
+                } else if (!isValidEmail(userEmailInput.value)) {
+                    showError(userEmailInput, 'Please enter a valid email address');
+                    isValid = false;
+                }
+            } else {
+                if (!adminIdInput.value.trim()) {
+                    showError(adminIdInput, 'Admin ID or Email is required');
+                    isValid = false;
+                }
+            }
+
+            if (!passwordInput.value.trim()) {
+                showError(passwordInput, 'Password is required');
+                isValid = false;
+            } else if (passwordInput.value.length < 6) {
+                showError(passwordInput, 'Password must be at least 6 characters');
+                isValid = false;
+            }
+
+            return isValid;
+        }
+
+        // Email Validation
+        function isValidEmail(email) {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            return emailRegex.test(email);
+        }
+
+        // Show Error
+        function showError(input, message) {
+            const formGroup = input.closest('.form-group');
+            formGroup.classList.add('error');
+            const errorMsg = formGroup.querySelector('.error-message');
+            errorMsg.textContent = message;
+        }
+
+        // Clear Errors
+        function clearErrors() {
+            const formGroups = document.querySelectorAll('.form-group.error');
+            formGroups.forEach(group => {
+                group.classList.remove('error');
+            });
+        }
+
+        // Hide Messages
+        function hideMessages() {
+            successMessage.classList.remove('show');
+            errorAlert.classList.remove('show');
+        }
+
+        // Clear Form
+        function clearForm() {
+            userEmailInput.value = '';
+            adminIdInput.value = '';
+            passwordInput.value = '';
+            document.getElementById('rememberMe').checked = false;
+        }
+
+        // Firebase Login
+        function firebaseLogin() {
+            loading.classList.add('show');
+            loginBtn.disabled = true;
+
+            const email = currentRole === 'user' ? userEmailInput.value : adminIdInput.value;
+            const password = passwordInput.value;
+
+            auth.signInWithEmailAndPassword(email, password)
+                .then((userCredential) => {
+                    loading.classList.remove('show');
+                    loginBtn.disabled = false;
+
+                    // Show success message
+                    successMessage.textContent = `Welcome back! Redirecting...`;
+                    successMessage.classList.add('show');
+
+                    // Redirect after 2 seconds
+                    setTimeout(() => {
+                        if (currentRole === 'user') {
+                            window.location.href = 'index.html';
+                        } else {
+                            window.location.href = 'admin.html';
+                        }
+                    }, 2000);
+                })
+                .catch((error) => {
+                    loading.classList.remove('show');
+                    loginBtn.disabled = false;
+
+                    // Show error message
+                    let errorMessage = 'Login failed. Please check your credentials.';
+                    
+                    if (error.code === 'auth/user-not-found') {
+                        errorMessage = 'No account found with this email address.';
+                    } else if (error.code === 'auth/wrong-password') {
+                        errorMessage = 'Incorrect password. Please try again.';
+                    } else if (error.code === 'auth/invalid-email') {
+                        errorMessage = 'Invalid email address.';
+                    } else if (error.code === 'auth/user-disabled') {
+                        errorMessage = 'This account has been disabled.';
+                    } else if (error.code === 'auth/too-many-requests') {
+                        errorMessage = 'Too many login attempts. Please try again later.';
+                    }
+
+                    errorAlert.textContent = errorMessage;
+                    errorAlert.classList.add('show');
+                });
+        }
+
+        // Sign Up Handler
+        function handleSignup(e) {
+            e.preventDefault();
+            alert('Sign up functionality would redirect to registration page.\n\nCreate a test account in Firebase Console to use this login.');
+        }
+
+        // Forgot Password Handler
+        function handleForgotPassword(e) {
+            e.preventDefault();
+            const email = userEmailInput.value;
+            
+            if (!email || !isValidEmail(email)) {
+                alert('Please enter a valid email address in the email field.');
+                return;
+            }
+
+            auth.sendPasswordResetEmail(email)
+                .then(() => {
+                    alert('Password reset email sent! Check your inbox.');
+                })
+                .catch((error) => {
+                    alert('Error: ' + error.message);
+                });
+        }
+
+        // Optional: Pre-fill demo credentials for testing
+        function fillDemoCredentials() {
+            if (currentRole === 'user') {
+                userEmailInput.value = 'test@civiccare.com';
+            } else {
+                adminIdInput.value = 'admin@civiccare.com';
+            }
+            passwordInput.value = 'test123456';
+        }
+
+        // Optional: Add keyboard shortcut for demo (Ctrl+D to fill demo credentials)
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'd') {
+                e.preventDefault();
+                fillDemoCredentials();
+            }
+        });
+
+        // Initial focus
+        userEmailInput.focus();
+    </script>
+</body>
+</html>

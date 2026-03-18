@@ -92,7 +92,7 @@ class CleanEnergyDataLoader:
             print(f"      Tickers: {', '.join(info['tickers'])}")
         print("="*70 + "\n")
     
-    def download_data(self, period='2y', interval='1d', max_retries=3):
+    def download_data(self, period='max', interval='1d', max_retries=3):
         """Download latest data from Yahoo Finance with retry logic"""
         print(f"\nDownloading {period} of data for {self.category}...")
         

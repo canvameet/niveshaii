@@ -78,7 +78,7 @@ def train_single_ticker(ticker, market_data=None, use_significant_moves=False):
     
     try:
         loader = CleanEnergyDataLoader(category='CUSTOM', custom_tickers=[ticker])
-        raw_data = loader.download_data(period='5y', interval='1d')
+        raw_data = loader.download_data(period='max', interval='1d')
         
         if raw_data.empty or len(raw_data) < 50:
             return None
@@ -174,7 +174,7 @@ def main(category='SDG_CLEAN_ENERGY', custom_tickers=None, use_significant_moves
         print(f"Impact: {sdg_info['impact']}")
     
     try:
-        raw_data = loader.download_data(period='5y', interval='1d')
+        raw_data = loader.download_data(period='max', interval='1d')
         
         if raw_data.empty or len(raw_data) < 50:
             raise ValueError("Insufficient data downloaded")
@@ -190,7 +190,7 @@ def main(category='SDG_CLEAN_ENERGY', custom_tickers=None, use_significant_moves
     market_data = None
     try:
         import yfinance as yf
-        spy_data = yf.download('SPY', period='5y', interval='1d', progress=False, auto_adjust=True)
+        spy_data = yf.download('SPY', period='max', interval='1d', progress=False, auto_adjust=True)
         if not spy_data.empty:
             spy_data.columns = [f'SPY_{col}' for col in spy_data.columns]
             market_data = spy_data
@@ -390,7 +390,7 @@ def train_and_predict(tickers, category='CUSTOM', use_significant_moves=False, t
         market_data = None
         try:
             import yfinance as yf
-            spy_data = yf.download('SPY', period='5y', interval='1d', progress=False, auto_adjust=True)
+            spy_data = yf.download('SPY', period='max', interval='1d', progress=False, auto_adjust=True)
             if not spy_data.empty:
                 spy_data.columns = [f'SPY_{col}' for col in spy_data.columns]
                 market_data = spy_data

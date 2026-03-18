@@ -7,6 +7,7 @@
     <title>NiveshAI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
@@ -125,6 +126,66 @@
             background: #FFFFFF;
             border: 1px solid #000000;
         }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .tab-btn.active {
+            background: #000;
+            color: #fff;
+        }
+
+        .dark .tab-btn.active {
+            background: #fff;
+            color: #000;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            z-index: 9999;
+            transition: all 0.3s;
+        }
+
+        .pnl-up {
+            color: #16a34a;
+        }
+
+        .pnl-down {
+            color: #dc2626;
+        }
+
+        .dark .pnl-up {
+            color: #4ade80;
+        }
+
+        .dark .pnl-down {
+            color: #f87171;
+        }
+
+        #chart-container {
+            height: 420px;
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }
+
+        .rec-ADD {
+            color: #16a34a;
+        }
+
+        .rec-REDUCE {
+            color: #dc2626;
+        }
+
+        .rec-HOLD {
+            color: #ca8a04;
+        }
     </style>
 
     <script>
@@ -153,12 +214,12 @@
         let newsMoodByTicker = {};
         let latestMacroRisk = null;
         let peerRadarData = [];
-        const whatIfState = {
-            volatility: 1.0,
-            riskFreeRate: 4.0,
-            newsSentiment: 0.0
-        };
-
+        let portfolioData = { holdings: [], summary: {} };
+        let tradesData = [];
+        let currentChartTicker = '';
+        let lwChart = null;
+        let candleSeries = null;
+        const whatIfState = { volatility: 1.0, riskFreeRate: 4.0, newsSentiment: 0.0 };
         let popularStocksData = [];
 
         // Dark Mode Logic
@@ -370,7 +431,11 @@
                         </div>
                     </div>
 
-                    
+                    </div>
+
+                    <div class="flex gap-3 pt-2 border-t-2 border-black dark:border-white mt-2">
+                        <button onclick="switchTab('charts');document.getElementById('chart-search').value='${stock.ticker}';chartSearch()" class="flex-1 py-2 rounded-xl text-sm font-bold border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition">Chart</button>
+                    </div>
                 </div>
             `;
         }
@@ -930,25 +995,271 @@
             }
         }
 
+        // ==================== TABS ====================
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            document.querySelector('[data-tab="' + tab + '"]').classList.add('active');
+            if (tab === 'portfolio') loadPortfolio();
+            if (tab === 'trades') loadTrades();
+        }
+
+        // ==================== CHART ====================
+        async function loadChart(ticker, period) {
+            if (!ticker) return;
+            currentChartTicker = ticker;
+            const container = document.getElementById('chart-container');
+            container.innerHTML = '<div class="flex items-center justify-center h-full"><div class="loading-spinner"></div><span class="ml-3 text-sm">Loading chart...</span></div>';
+            try {
+                const r = await fetch(`${API_BASE}/stock-chart/${ticker}?period=${period}`);
+                const d = await r.json();
+                if (d.error) throw new Error(d.error);
+                document.getElementById('chart-ticker-name').textContent = (d.companyName || ticker);
+                const chg = d.priceChangePct || 0;
+                const chgEl = document.getElementById('chart-price-info');
+                chgEl.innerHTML = `<span class="text-xl font-bold">${d.currency}${d.currentPrice}</span> <span class="ml-2 text-sm font-medium ${chg >= 0 ? 'pnl-up' : 'pnl-down'}">${chg >= 0 ? '+' : ''}${chg}%</span>`;
+                container.innerHTML = '';
+                if (lwChart) { lwChart.remove(); lwChart = null; }
+                const isDark = document.documentElement.classList.contains('dark');
+                lwChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth, height: 420,
+                    layout: { background: { color: isDark ? '#000' : '#fff' }, textColor: isDark ? '#fff' : '#000' },
+                    grid: { vertLines: { color: isDark ? '#222' : '#eee' }, horzLines: { color: isDark ? '#222' : '#eee' } },
+                    timeScale: { timeVisible: true, borderColor: isDark ? '#333' : '#ccc' }
+                });
+                candleSeries = lwChart.addCandlestickSeries({
+                    upColor: '#16a34a', downColor: '#dc2626', borderUpColor: '#16a34a', borderDownColor: '#dc2626',
+                    wickUpColor: '#16a34a', wickDownColor: '#dc2626'
+                });
+                const cdata = d.dates.map((dt, i) => ({
+                    time: dt.split(' ')[0],
+                    open: d.opens[i], high: d.highs[i], low: d.lows[i], close: d.closes[i]
+                })).filter(x => x.open && x.high && x.low && x.close);
+                candleSeries.setData(cdata);
+                lwChart.timeScale().fitContent();
+            } catch (e) {
+                container.innerHTML = `<div class="flex items-center justify-center h-full text-sm text-red-500">Error: ${e.message}</div>`;
+            }
+        }
+
+        function chartSearch() {
+            const t = document.getElementById('chart-search').value.trim().toUpperCase();
+            if (t) { currentChartTicker = t; document.getElementById('chart-ticker-label').textContent = t; loadChart(t, document.querySelector('.period-btn.active')?.dataset.period || '1y'); }
+        }
+
+        // ==================== TRADE ====================
+        function openTradeModal(ticker, type, price, currency) {
+            document.getElementById('trade-ticker').textContent = ticker;
+            document.getElementById('trade-type').textContent = type;
+            document.getElementById('trade-type').className = type === 'BUY' ? 'font-bold pnl-up' : 'font-bold pnl-down';
+            document.getElementById('trade-price').textContent = currency + price;
+            document.getElementById('trade-qty').value = 1;
+            document.getElementById('trade-total').textContent = currency + price;
+            document.getElementById('trade-modal').dataset.ticker = ticker;
+            document.getElementById('trade-modal').dataset.type = type;
+            document.getElementById('trade-modal').style.display = 'flex';
+            document.getElementById('trade-qty').oninput = () => {
+                const q = parseFloat(document.getElementById('trade-qty').value) || 0;
+                document.getElementById('trade-total').textContent = currency + (q * price).toFixed(2);
+            };
+        }
+
+        function closeTradeModal() { document.getElementById('trade-modal').style.display = 'none'; }
+
+        async function confirmTrade() {
+            const modal = document.getElementById('trade-modal');
+            const ticker = modal.dataset.ticker;
+            const type = modal.dataset.type;
+            const qty = parseFloat(document.getElementById('trade-qty').value);
+            if (!qty || qty <= 0) { showToast('Enter a valid quantity', 'error'); return; }
+
+            const btn = modal.querySelector('button[onclick="confirmTrade()"]');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+
+            try {
+                const r = await fetch(`${API_BASE}/trade`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ticker, type, quantity: qty })
+                });
+
+                if (r.status === 401 || r.redirected) {
+                    showToast('Session expired. Redirecting to login...', 'error');
+                    setTimeout(() => window.location.href = '/login', 2000);
+                    return;
+                }
+
+                const d = await r.json();
+                if (d.error) throw new Error(d.error);
+
+                closeTradeModal();
+                showToast(d.message, 'success');
+
+                // Refresh data immediately
+                if (typeof loadPortfolio === 'function') loadPortfolio();
+                if (typeof loadTrades === 'function') loadTrades();
+
+            } catch (e) {
+                showToast(e.message || 'Trade execution failed', 'error');
+                console.error('Trade Execution Error:', e);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // ==================== PORTFOLIO ====================
+        async function loadPortfolio() {
+            const container = document.getElementById('portfolio-holdings');
+            container.innerHTML = '<div class="text-center p-6"><div class="loading-spinner mx-auto"></div></div>';
+            try {
+                const r = await fetch(`${API_BASE}/portfolio`);
+                const d = await r.json();
+                portfolioData = d;
+                renderPortfolio(d);
+            } catch (e) { container.innerHTML = `<p class="text-center text-red-500 p-4">${e.message}</p>`; }
+        }
+
+        function renderPortfolio(d) {
+            const s = d.summary || {};
+            document.getElementById('port-total-value').textContent = '$' + (s.totalCurrent || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
+            document.getElementById('port-total-pnl').textContent = (s.totalPnl >= 0 ? '+' : '') + '$' + Math.abs(s.totalPnl || 0).toFixed(2);
+            document.getElementById('port-total-pnl').className = 'text-2xl font-bold ' + (s.totalPnl >= 0 ? 'pnl-up' : 'pnl-down');
+            document.getElementById('port-pnl-pct').textContent = (s.totalPnlPct >= 0 ? '+' : '') + (s.totalPnlPct || 0).toFixed(2) + '%';
+            const tbody = document.getElementById('portfolio-holdings');
+            if (!d.holdings || d.holdings.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-400">No holdings yet. Add stocks below.</td></tr>'; return;
+            }
+            tbody.innerHTML = d.holdings.map(h => {
+                const up = h.pnl >= 0;
+                return `<tr class="border-b border-black dark:border-white last:border-0 hover:bg-gray-50 dark:hover:bg-gray-900">
+                    <td class="py-3 px-2 font-bold">${h.ticker}</td>
+                    <td class="py-3 px-2 text-center">${h.quantity}</td>
+                    <td class="py-3 px-2 text-center">${h.currency}${h.avgBuyPrice}</td>
+                    <td class="py-3 px-2 text-center">${h.currency}${h.currentPrice}</td>
+                    <td class="py-3 px-2 text-center ${up ? 'pnl-up' : 'pnl-down'} font-semibold">${h.currency}${h.currentValue.toFixed(2)}</td>
+                    <td class="py-3 px-2 text-center font-semibold ${up ? 'pnl-up' : 'pnl-down'}">${up ? '+' : ''}${h.pnlPct.toFixed(2)}%</td>
+                    <td class="py-3 px-2 text-center"><button onclick="removeHolding('${h.ticker}')" class="text-xs border border-black dark:border-white px-2 py-1 rounded hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition">Remove</button></td>
+                </tr>`;
+            }).join('');
+        }
+
+        async function addHolding() {
+            const ticker = document.getElementById('add-ticker').value.trim().toUpperCase();
+            const qty = parseFloat(document.getElementById('add-qty').value);
+            const price = parseFloat(document.getElementById('add-price').value);
+            if (!ticker || !qty || !price) { showToast('Fill all fields', 'error'); return; }
+            try {
+                const r = await fetch(`${API_BASE}/portfolio`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker, quantity: qty, avgBuyPrice: price }) });
+                const d = await r.json();
+                if (d.error) throw new Error(d.error);
+                document.getElementById('add-ticker').value = ''; document.getElementById('add-qty').value = ''; document.getElementById('add-price').value = '';
+                showToast(ticker + ' added to portfolio', 'success');
+                loadPortfolio();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        async function removeHolding(ticker) {
+            try {
+                const r = await fetch(`${API_BASE}/portfolio/${ticker}`, { method: 'DELETE' });
+                const d = await r.json();
+                if (d.error) throw new Error(d.error);
+                showToast(ticker + ' removed', 'success'); loadPortfolio();
+            } catch (e) { showToast(e.message, 'error'); }
+        }
+
+        async function analyzePortfolio() {
+            const btn = document.getElementById('analyze-btn');
+            btn.disabled = true; btn.textContent = 'Analyzing...';
+            const container = document.getElementById('portfolio-analysis');
+            container.innerHTML = '<div class="text-center p-6"><div class="loading-spinner mx-auto mb-2"></div><p class="text-sm">Running AI analysis on all holdings...</p></div>';
+            try {
+                const r = await fetch(`${API_BASE}/portfolio/analyze`, { method: 'POST' });
+                const d = await r.json();
+                if (d.error) throw new Error(d.error);
+                const s = d.summary;
+                container.innerHTML = `
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                        <div class="glass-panel p-3 rounded-xl text-center"><div class="text-xs mb-1">Risk Score</div><div class="text-lg font-bold ${s.riskScore === 'High' ? 'pnl-down' : s.riskScore === 'Low' ? 'pnl-up' : 'text-yellow-500'}">${s.riskScore}</div></div>
+                        <div class="glass-panel p-3 rounded-xl text-center"><div class="text-xs mb-1">Bullish</div><div class="text-lg font-bold pnl-up">${s.bullishCount} stocks</div></div>
+                        <div class="glass-panel p-3 rounded-xl text-center"><div class="text-xs mb-1">Bearish</div><div class="text-lg font-bold pnl-down">${s.bearishCount} stocks</div></div>
+                        <div class="glass-panel p-3 rounded-xl text-center"><div class="text-xs mb-1">Holdings</div><div class="text-lg font-bold">${s.holdingsCount}</div></div>
+                    </div>
+                    <div class="space-y-3">${d.holdings.map(h => `
+                        <div class="glass-panel p-4 rounded-xl flex flex-col md:flex-row md:items-center gap-3">
+                            <div class="flex-1">
+                                <span class="font-bold text-lg">${h.ticker}</span>
+                                <span class="ml-2 text-xs bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">${h.weight}% of portfolio</span>
+                            </div>
+                            <div class="flex gap-4 text-sm">
+                                <div class="text-center"><div class="text-xs opacity-60">P&L</div><div class="font-semibold ${h.pnl >= 0 ? 'pnl-up' : 'pnl-down'}">${h.pnl >= 0 ? '+' : ''}${h.pnl.toFixed(2)}</div></div>
+                                <div class="text-center"><div class="text-xs opacity-60">AI Signal</div><div class="font-semibold ${h.aiDirection === 'UP' ? 'pnl-up' : 'pnl-down'}">${h.aiDirection === 'N/A' ? '—' : h.aiDirection + ' ' + h.aiConfidence + '%'}</div></div>
+                                <div class="text-center"><div class="text-xs opacity-60">Action</div><div class="font-bold rec-${h.recommendation}">${h.recommendation}</div></div>
+                            </div>
+                        </div>`).join('')}
+                    </div>`;
+            } catch (e) { container.innerHTML = `<p class="text-center text-red-500 p-4">${e.message}</p>`; }
+            finally { btn.disabled = false; btn.textContent = 'Run AI Analysis'; }
+        }
+
+        // ==================== TRADES ====================
+        async function loadTrades() {
+            const tbody = document.getElementById('trades-body');
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6"><div class="loading-spinner mx-auto"></div></td></tr>';
+            try {
+                const r = await fetch(`${API_BASE}/trades`);
+                const d = await r.json();
+                tradesData = d.trades || [];
+                if (tradesData.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-400">No trades yet.</td></tr>'; return; }
+                tbody.innerHTML = tradesData.map(t => {
+                    const dt = new Date(t.timestamp).toLocaleString();
+                    const isBuy = t.type === 'BUY';
+                    return `<tr class="border-b border-black dark:border-white last:border-0">
+                        <td class="py-2 px-2 text-xs text-gray-500">${dt}</td>
+                        <td class="py-2 px-2 font-bold">${t.ticker}</td>
+                        <td class="py-2 px-2 font-bold ${isBuy ? 'pnl-up' : 'pnl-down'}">${t.type}</td>
+                        <td class="py-2 px-2 text-center">${t.quantity}</td>
+                        <td class="py-2 px-2 text-center">${t.currency}${t.price}</td>
+                        <td class="py-2 px-2 text-center font-semibold">${t.currency}${t.totalValue}</td>
+                        <td class="py-2 px-2 text-center"><span class="text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full">${t.status}</span></td>
+                    </tr>`;
+                }).join('');
+            } catch (e) { tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-red-500">${e.message}</td></tr>`; }
+        }
+
+        // ==================== TOAST ====================
+        function showToast(msg, type = 'info') {
+            const el = document.createElement('div');
+            const colors = { success: 'bg-green-600', error: 'bg-red-600', info: 'bg-blue-600' };
+            el.className = `toast px-4 py-3 rounded-xl text-white text-sm shadow-lg ${colors[type] || colors.info}`;
+            el.textContent = msg;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 3500);
+        }
+
         window.onload = () => {
             initTheme();
             if (window.lucide) lucide.createIcons();
-
-            document.getElementById('search-input').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') handleSearch();
+            document.getElementById('search-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleSearch(); });
+            document.getElementById('chart-search').addEventListener('keypress', (e) => { if (e.key === 'Enter') chartSearch(); });
+            document.querySelectorAll('.period-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active', 'bg-black', 'text-white', 'dark:bg-white', 'dark:text-black'));
+                    btn.classList.add('active', 'bg-black', 'text-white', 'dark:bg-white', 'dark:text-black');
+                    if (currentChartTicker) loadChart(currentChartTicker, btn.dataset.period);
+                });
             });
-
             fetchPopularStocks();
             fetchMacroEvents().then(data => renderMacroOverlay(data?.macroEvents || [], data?.macroRisk));
-            renderSignalRadar();
-            renderNewsSection();
-            initWhatIfSliders();
-
-            // Start order book updates
+            renderSignalRadar(); renderNewsSection(); initWhatIfSliders();
             startOrderBookUpdates('AAPL');
-
+            switchTab('dashboard');
             window.onclick = (e) => {
                 if (e.target === document.getElementById('viz-modal')) closeModal();
+                if (e.target === document.getElementById('trade-modal')) closeTradeModal();
             };
         };
     </script>
@@ -997,165 +1308,345 @@
             </div>
         </header>
 
+        <!-- Tab Navigation -->
+        <nav class="flex gap-2 mb-6 border-b-2 border-black dark:border-white pb-3">
+            <button data-tab="dashboard" onclick="switchTab('dashboard')"
+                class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold border-2 border-black dark:border-white transition">Dashboard</button>
+            <button data-tab="charts" onclick="switchTab('charts')"
+                class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold border-2 border-black dark:border-white transition">Charts</button>
+            <button data-tab="portfolio" onclick="switchTab('portfolio')"
+                class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold border-2 border-black dark:border-white transition">Portfolio</button>
+            <button data-tab="trades" onclick="switchTab('trades')"
+                class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold border-2 border-black dark:border-white transition">Trades</button>
+        </nav>
+
         <!-- Status Bar -->
-        <div class="flex justify-between items-center mb-6 px-1">
-            <div id="search-status" class="text-sm font-medium text-black dark:text-white">Ready to analyze.</div>
-            <div class="flex gap-2">
-                <button id="view-viz-btn" onclick="showVisualizations()"
-                    class="hidden flex items-center gap-2 px-4 py-2 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg text-sm font-medium hover:bg-black dark:hover:bg-white transition shadow-sm text-black dark:text-white">
-                    <i data-lucide="bar-chart-2" class="w-4 h-4"></i> Charts
-                </button>
-                <button id="download-report-btn" onclick="downloadReport()"
-                    class="hidden flex items-center gap-2 px-4 py-2 bg-black dark:bg-white hover:bg-white dark:hover:bg-black text-white dark:text-black border-2 border-black dark:border-white rounded-lg text-sm font-medium transition shadow-sm">
-                    <i data-lucide="download" class="w-4 h-4"></i> Report
-                </button>
+        <div id="tab-dashboard" class="tab-content">
+            <div class="flex justify-between items-center mb-6 px-1">
+                <div id="search-status" class="text-sm font-medium text-black dark:text-white">Ready to analyze.</div>
+                <div class="flex gap-2">
+                    <button id="view-viz-btn" onclick="showVisualizations()"
+                        class="hidden flex items-center gap-2 px-4 py-2 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg text-sm font-medium hover:bg-black dark:hover:bg-white transition shadow-sm text-black dark:text-white">
+                        <i data-lucide="bar-chart-2" class="w-4 h-4"></i> Charts
+                    </button>
+                    <button id="download-report-btn" onclick="downloadReport()"
+                        class="hidden flex items-center gap-2 px-4 py-2 bg-black dark:bg-white hover:bg-white dark:hover:bg-black text-white dark:text-black border-2 border-black dark:border-white rounded-lg text-sm font-medium transition shadow-sm">
+                        <i data-lucide="download" class="w-4 h-4"></i> Report
+                    </button>
+                </div>
+            </div>
+
+            <!-- Popular Stocks Grid -->
+            <div id="popular-stocks-section" class="mb-8">
+                <h2 class="text-lg font-semibold mb-4 flex items-center gap-2 text-black dark:text-white">
+                    Suggested Stocks
+                </h2>
+                <div id="popular-stocks-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Main Dashboard Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                <!-- Left Column: Predictions -->
+                <div class="lg:col-span-2 space-y-6">
+                    <div id="stock-predictions-container">
+                        <!-- Predictions injected here -->
+                    </div>
+
+                    <!-- News Feed -->
+                    <div class="glass-panel p-5 rounded-2xl">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-semibold flex items-center gap-2 text-black dark:text-white">
+                                <i data-lucide="rss" class="w-4 h-4 text-black dark:text-white"></i> Live Feed
+                            </h3>
+
+                        </div>
+                        <div id="news-section" class="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                            <!-- News content -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Widgets -->
+                <div class="space-y-6">
+
+                    <!-- Order Book Widget -->
+                    <div class="glass-panel p-5 rounded-2xl">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-semibold flex items-center gap-2 text-black dark:text-white">
+                                <i data-lucide="book-open" class="w-4 h-4 text-black dark:text-white"></i> Order Book
+                            </h3>
+                            <span id="orderbook-ticker"
+                                class="text-xs font-mono font-bold bg-white dark:bg-black text-black dark:text-white border-2 border-black dark:border-white px-2 py-0.5 rounded-full">AAPL</span>
+                        </div>
+
+                        <div class="space-y-3">
+                            <!-- Asks (Sell Orders) -->
+                            <div>
+                                <div
+                                    class="text-xs font-semibold mb-2 text-red-600 dark:text-red-400 flex items-center gap-1">
+                                    <span>ASKS</span>
+                                    <span class="text-[10px] opacity-60">(Sell)</span>
+                                </div>
+                                <div id="orderbook-asks" class="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+
+                            <!-- Order Imbalance -->
+                            <div class="py-2 border-y-2 border-black dark:border-white">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span class="text-black dark:text-white font-medium">Order Imbalance</span>
+                                    <span id="orderbook-spread" class="font-mono font-bold text-xs"></span>
+                                </div>
+                            </div>
+
+                            <!-- Bids (Buy Orders) -->
+                            <div>
+                                <div
+                                    class="text-xs font-semibold mb-2 text-green-600 dark:text-green-400 flex items-center gap-1">
+                                    <span>BIDS</span>
+                                    <span class="text-[10px] opacity-60">(Buy)</span>
+                                </div>
+                                <div id="orderbook-bids" class="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+
+                            <!-- Last Update -->
+                            <div class="pt-2 border-t-2 border-black dark:border-white">
+                                <div
+                                    class="flex justify-between items-center text-[10px] text-black dark:text-white opacity-60">
+                                    <span>Last Update</span>
+                                    <span id="orderbook-time">--:--:--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- What-If Scenario -->
+                    <div class="glass-panel p-5 rounded-2xl">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-semibold flex items-center gap-2 text-black dark:text-white">
+                                <i data-lucide="sliders" class="w-4 h-4 text-black dark:text-white"></i> Scenario Lab
+                            </h3>
+                            <span
+                                class="text-[10px] font-bold bg-white dark:bg-black text-black dark:text-white border-2 border-black dark:border-white px-2 py-0.5 rounded-full">SIMULATOR</span>
+                        </div>
+
+                        <div class="space-y-4 mb-4">
+                            <div>
+                                <div class="flex justify-between text-xs mb-1.5 text-black dark:text-white">
+                                    <span>Market Volatility</span>
+                                    <span id="volatility-value" class="font-mono font-medium">1.00x</span>
+                                </div>
+                                <input id="volatility-slider" type="range" min="0.6" max="1.5" step="0.05" value="1"
+                                    class="w-full h-1.5 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg appearance-none cursor-pointer accent-black dark:accent-white">
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-xs mb-1.5 text-black dark:text-white">
+                                    <span>Risk-Free Rate</span>
+                                    <span id="riskfree-value" class="font-mono font-medium">4.0%</span>
+                                </div>
+                                <input id="riskfree-slider" type="range" min="2.0" max="6.0" step="0.1" value="4"
+                                    class="w-full h-1.5 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg appearance-none cursor-pointer accent-black dark:accent-white">
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-xs mb-1.5 text-black dark:text-white">
+                                    <span>News Sentiment Bias</span>
+                                    <span id="news-sentiment-value" class="font-mono font-medium">0.0</span>
+                                </div>
+                                <input id="news-sentiment-slider" type="range" min="-1" max="1" step="0.1" value="0"
+                                    class="w-full h-1.5 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg appearance-none cursor-pointer accent-black dark:accent-white">
+                            </div>
+                        </div>
+
+                        <div id="what-if-output" class="pt-3 border-t-2 border-black dark:border-white">
+                            <!-- Output -->
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div><!-- end dashboard tab -->
+
+        <!-- ===== CHARTS TAB ===== -->
+        <div id="tab-charts" class="tab-content">
+            <div class="glass-panel p-5 rounded-2xl mb-4">
+                <div class="flex flex-col md:flex-row md:items-center gap-4 mb-4">
+                    <div>
+                        <h2 id="chart-ticker-name" class="text-2xl font-bold">Select a Stock</h2>
+                        <div id="chart-price-info" class="mt-1"></div>
+                    </div>
+                    <div class="flex gap-2 ml-auto items-center flex-wrap">
+                        <div class="relative">
+                            <input id="chart-search" type="text" placeholder="Ticker (e.g. AAPL)"
+                                class="pl-3 pr-16 py-2 border-2 border-black dark:border-white rounded-lg text-sm bg-white dark:bg-black">
+                            <button onclick="chartSearch()"
+                                class="absolute right-1 top-1 bottom-1 px-2 bg-black dark:bg-white text-white dark:text-black rounded text-xs font-semibold">Go</button>
+                        </div>
+                        <span id="chart-ticker-label"
+                            class="text-xs font-mono font-bold border-2 border-black dark:border-white px-2 py-1 rounded-full"></span>
+                    </div>
+                </div>
+                <div class="flex gap-1 mb-4 flex-wrap">
+                    <button
+                        class="period-btn active bg-black text-white dark:bg-white dark:text-black border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="1d">1D</button>
+                    <button
+                        class="period-btn border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="5d">5D</button>
+                    <button
+                        class="period-btn border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="1mo">1M</button>
+                    <button
+                        class="period-btn border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="3mo">3M</button>
+                    <button
+                        class="period-btn border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="6mo">6M</button>
+                    <button
+                        class="period-btn border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="1y">1Y</button>
+                    <button
+                        class="period-btn border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="5y">5Y</button>
+                    <button
+                        class="period-btn border-2 border-black dark:border-white px-3 py-1 rounded text-xs font-semibold"
+                        data-period="max">MAX</button>
+                </div>
+                <div id="chart-container"
+                    class="border-2 border-black dark:border-white rounded-xl flex items-center justify-center">
+                    <p class="text-gray-400 text-sm">Search for a ticker above to load the chart</p>
+                </div>
             </div>
         </div>
 
-        <!-- Popular Stocks Grid -->
-        <div id="popular-stocks-section" class="mb-8">
-            <h2 class="text-lg font-semibold mb-4 flex items-center gap-2 text-black dark:text-white">
-                Suggested Stocks
-            </h2>
-            <div id="popular-stocks-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <!-- Populated by JS -->
+        <!-- ===== PORTFOLIO TAB ===== -->
+        <div id="tab-portfolio" class="tab-content">
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                <div class="glass-panel p-4 rounded-2xl text-center">
+                    <div class="text-xs mb-1 opacity-60">Portfolio Value</div>
+                    <div id="port-total-value" class="text-2xl font-bold">$0.00</div>
+                </div>
+                <div class="glass-panel p-4 rounded-2xl text-center">
+                    <div class="text-xs mb-1 opacity-60">Total P&L</div>
+                    <div id="port-total-pnl" class="text-2xl font-bold">$0.00</div>
+                </div>
+                <div class="glass-panel p-4 rounded-2xl text-center">
+                    <div class="text-xs mb-1 opacity-60">Return %</div>
+                    <div id="port-pnl-pct" class="text-2xl font-bold">0.00%</div>
+                </div>
+            </div>
+            <!-- Holdings Table -->
+            <div class="glass-panel p-5 rounded-2xl mb-6 overflow-x-auto">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-semibold">Holdings</h3>
+                    <button id="analyze-btn" onclick="analyzePortfolio()"
+                        class="flex items-center gap-2 px-4 py-2 bg-black dark:bg-white text-white dark:text-black border-2 border-black dark:border-white rounded-lg text-xs font-semibold hover:opacity-80 transition">Run
+                        AI Analysis</button>
+                </div>
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b-2 border-black dark:border-white text-xs opacity-60">
+                            <th class="text-left py-2 px-2">Ticker</th>
+                            <th class="py-2 px-2">Qty</th>
+                            <th class="py-2 px-2">Avg Buy</th>
+                            <th class="py-2 px-2">Current</th>
+                            <th class="py-2 px-2">Value</th>
+                            <th class="py-2 px-2">P&L %</th>
+                            <th class="py-2 px-2">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolio-holdings">
+                        <tr>
+                            <td colspan="7" class="text-center py-8 text-gray-400">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <!-- Add Holding Form -->
+            <div class="glass-panel p-5 rounded-2xl mb-6">
+                <h3 class="font-semibold mb-4">Add / Update Holding</h3>
+                <div class="flex flex-col md:flex-row gap-3">
+                    <input id="add-ticker" type="text" placeholder="Ticker (e.g. AAPL)"
+                        class="flex-1 px-3 py-2 border-2 border-black dark:border-white rounded-lg bg-white dark:bg-black text-sm">
+                    <input id="add-qty" type="number" placeholder="Qty" min="0" step="any"
+                        class="w-32 px-3 py-2 border-2 border-black dark:border-white rounded-lg bg-white dark:bg-black text-sm">
+                    <input id="add-price" type="number" placeholder="Avg Buy Price" min="0" step="any"
+                        class="w-40 px-3 py-2 border-2 border-black dark:border-white rounded-lg bg-white dark:bg-black text-sm">
+                    <button onclick="addHolding()"
+                        class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black border-2 border-black dark:border-white rounded-lg text-sm font-semibold transition hover:opacity-80">Add</button>
+                </div>
+            </div>
+            <!-- AI Analysis Results -->
+            <div id="portfolio-analysis"></div>
+        </div>
+
+        <!-- ===== TRADES TAB ===== -->
+        <div id="tab-trades" class="tab-content">
+            <div class="glass-panel p-5 rounded-2xl overflow-x-auto">
+                <h2 class="font-semibold text-lg mb-4 flex items-center gap-2">
+                    <i data-lucide="history" class="w-5 h-5"></i> Trade History
+                    <span class="ml-auto text-xs opacity-50">Simulated — no real money involved</span>
+                </h2>
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b-2 border-black dark:border-white text-xs opacity-60">
+                            <th class="text-left py-2 px-2">Time</th>
+                            <th class="py-2 px-2">Ticker</th>
+                            <th class="py-2 px-2">Type</th>
+                            <th class="py-2 px-2">Qty</th>
+                            <th class="py-2 px-2">Price</th>
+                            <th class="py-2 px-2">Total</th>
+                            <th class="py-2 px-2">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-body">
+                        <tr>
+                            <td colspan="7" class="text-center py-8 text-gray-400">No trades yet.</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
-        <!-- Main Dashboard Grid -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    </div>
 
-            <!-- Left Column: Predictions -->
-            <div class="lg:col-span-2 space-y-6">
-                <div id="stock-predictions-container">
-                    <!-- Predictions injected here -->
+    <!-- Trade Execution Modal -->
+    <div id="trade-modal" style="display:none;position:fixed;inset:0;z-index:9990;background:rgba(0,0,0,0.6)"
+        class="items-center justify-center">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)"
+            class="bg-white dark:bg-black border-2 border-black dark:border-white rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+            <h3 class="text-lg font-bold mb-4">Execute Simulated Trade</h3>
+            <div class="space-y-3 mb-5">
+                <div class="flex justify-between text-sm"><span class="opacity-60">Ticker</span><span id="trade-ticker"
+                        class="font-bold"></span></div>
+                <div class="flex justify-between text-sm"><span class="opacity-60">Action</span><span id="trade-type"
+                        class="font-bold"></span></div>
+                <div class="flex justify-between text-sm"><span class="opacity-60">Market Price</span><span
+                        id="trade-price" class="font-semibold"></span></div>
+                <div class="flex justify-between items-center text-sm">
+                    <span class="opacity-60">Quantity</span>
+                    <input id="trade-qty" type="number" min="0.01" step="any" value="1"
+                        class="w-24 text-right border-2 border-black dark:border-white rounded-lg px-2 py-1 bg-white dark:bg-black text-sm">
                 </div>
-
-                <!-- News Feed -->
-                <div class="glass-panel p-5 rounded-2xl">
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="font-semibold flex items-center gap-2 text-black dark:text-white">
-                            <i data-lucide="rss" class="w-4 h-4 text-black dark:text-white"></i> Live Feed
-                        </h3>
-
-                    </div>
-                    <div id="news-section" class="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                        <!-- News content -->
-                    </div>
+                <div class="flex justify-between text-sm border-t-2 border-black dark:border-white pt-3"><span
+                        class="font-semibold">Total Value</span><span id="trade-total" class="font-bold text-lg"></span>
                 </div>
             </div>
-
-            <!-- Right Column: Widgets -->
-            <div class="space-y-6">
-
-                <!-- Order Book Widget -->
-                <div class="glass-panel p-5 rounded-2xl">
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="font-semibold flex items-center gap-2 text-black dark:text-white">
-                            <i data-lucide="book-open" class="w-4 h-4 text-black dark:text-white"></i> Order Book
-                        </h3>
-                        <span id="orderbook-ticker"
-                            class="text-xs font-mono font-bold bg-white dark:bg-black text-black dark:text-white border-2 border-black dark:border-white px-2 py-0.5 rounded-full">AAPL</span>
-                    </div>
-
-                    <div class="space-y-3">
-                        <!-- Asks (Sell Orders) -->
-                        <div>
-                            <div
-                                class="text-xs font-semibold mb-2 text-red-600 dark:text-red-400 flex items-center gap-1">
-                                <span>ASKS</span>
-                                <span class="text-[10px] opacity-60">(Sell)</span>
-                            </div>
-                            <div id="orderbook-asks" class="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
-                                <!-- Populated by JS -->
-                            </div>
-                        </div>
-
-                        <!-- Order Imbalance -->
-                        <div class="py-2 border-y-2 border-black dark:border-white">
-                            <div class="flex justify-between items-center text-xs">
-                                <span class="text-black dark:text-white font-medium">Order Imbalance</span>
-                                <span id="orderbook-spread" class="font-mono font-bold text-xs"></span>
-                            </div>
-                        </div>
-
-                        <!-- Bids (Buy Orders) -->
-                        <div>
-                            <div
-                                class="text-xs font-semibold mb-2 text-green-600 dark:text-green-400 flex items-center gap-1">
-                                <span>BIDS</span>
-                                <span class="text-[10px] opacity-60">(Buy)</span>
-                            </div>
-                            <div id="orderbook-bids" class="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
-                                <!-- Populated by JS -->
-                            </div>
-                        </div>
-
-                        <!-- Last Update -->
-                        <div class="pt-2 border-t-2 border-black dark:border-white">
-                            <div
-                                class="flex justify-between items-center text-[10px] text-black dark:text-white opacity-60">
-                                <span>Last Update</span>
-                                <span id="orderbook-time">--:--:--</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- What-If Scenario -->
-                <div class="glass-panel p-5 rounded-2xl">
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="font-semibold flex items-center gap-2 text-black dark:text-white">
-                            <i data-lucide="sliders" class="w-4 h-4 text-black dark:text-white"></i> Scenario Lab
-                        </h3>
-                        <span
-                            class="text-[10px] font-bold bg-white dark:bg-black text-black dark:text-white border-2 border-black dark:border-white px-2 py-0.5 rounded-full">SIMULATOR</span>
-                    </div>
-
-                    <div class="space-y-4 mb-4">
-                        <div>
-                            <div class="flex justify-between text-xs mb-1.5 text-black dark:text-white">
-                                <span>Market Volatility</span>
-                                <span id="volatility-value" class="font-mono font-medium">1.00x</span>
-                            </div>
-                            <input id="volatility-slider" type="range" min="0.6" max="1.5" step="0.05" value="1"
-                                class="w-full h-1.5 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg appearance-none cursor-pointer accent-black dark:accent-white">
-                        </div>
-                        <div>
-                            <div class="flex justify-between text-xs mb-1.5 text-black dark:text-white">
-                                <span>Risk-Free Rate</span>
-                                <span id="riskfree-value" class="font-mono font-medium">4.0%</span>
-                            </div>
-                            <input id="riskfree-slider" type="range" min="2.0" max="6.0" step="0.1" value="4"
-                                class="w-full h-1.5 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg appearance-none cursor-pointer accent-black dark:accent-white">
-                        </div>
-                        <div>
-                            <div class="flex justify-between text-xs mb-1.5 text-black dark:text-white">
-                                <span>News Sentiment Bias</span>
-                                <span id="news-sentiment-value" class="font-mono font-medium">0.0</span>
-                            </div>
-                            <input id="news-sentiment-slider" type="range" min="-1" max="1" step="0.1" value="0"
-                                class="w-full h-1.5 bg-white dark:bg-black border-2 border-black dark:border-white rounded-lg appearance-none cursor-pointer accent-black dark:accent-white">
-                        </div>
-                    </div>
-
-                    <div id="what-if-output" class="pt-3 border-t-2 border-black dark:border-white">
-                        <!-- Output -->
-                    </div>
-                </div>
-
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="closeTradeModal()"
+                    class="py-2 rounded-xl border-2 border-black dark:border-white text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-900 transition">Cancel</button>
+                <button onclick="confirmTrade()"
+                    class="py-2 rounded-xl bg-black dark:bg-white text-white dark:text-black border-2 border-black dark:border-white text-sm font-bold hover:opacity-80 transition">Confirm</button>
             </div>
+            <p class="text-xs text-center mt-3 opacity-40">Simulated trade — no real funds used.</p>
         </div>
-
-        <footer
-            class="mt-12 pt-6 border-t-2 border-black dark:border-white text-center text-sm text-black dark:text-white">
-            <p class="flex items-center justify-center gap-2">
-                <i data-lucide="cpu" class="w-4 h-4"></i>
-                Powered by <span class="font-medium text-black dark:text-white">Aimers AI Solutions
-                </span>
-            </p>
-        </footer>
-
     </div>
 
     <!-- Visualizations Modal -->

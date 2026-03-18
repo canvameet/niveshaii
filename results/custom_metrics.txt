@@ -1,31 +1,31 @@
-MARKET MOVEMENT CLASSIFIER - Custom Selection
+NIVESHAI - Custom Selection
 ======================================================================
 
 Category: CUSTOM
-Tickers: AAPL
+Tickers: TCS.NS
 SDG Aligned: No
 
-Training Accuracy:   0.9967
-Test Accuracy:       0.5368
-Test F1-Score:       0.6192
-Test ROC-AUC:        0.5465
+Training Accuracy:   0.9778
+Test Accuracy:       0.5091
+Test F1-Score:       0.5645
+Test ROC-AUC:        0.5323
 
 Confusion Matrix:
-[[37 70]
- [37 87]]
+[[209 351]
+ [186 348]]
 
 Classification Report:
               precision    recall  f1-score   support
 
-           0       0.50      0.35      0.41       107
-           1       0.55      0.70      0.62       124
+           0       0.53      0.37      0.44       560
+           1       0.50      0.65      0.56       534
 
-    accuracy                           0.54       231
-   macro avg       0.53      0.52      0.51       231
-weighted avg       0.53      0.54      0.52       231
+    accuracy                           0.51      1094
+   macro avg       0.51      0.51      0.50      1094
+weighted avg       0.51      0.51      0.50      1094
 
 
 Next Day Prediction:
-Ticker: AAPL
-Movement: DOWN
-Confidence: 81.38%
+Ticker: TCS.NS
+Movement: UP
+Confidence: 90.66%
